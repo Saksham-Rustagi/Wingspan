@@ -1,72 +1,81 @@
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  writeBatch,
+} from 'firebase/firestore';
+import { db } from './firebase';
 import type { AppState, Player, GameEntry } from '../types';
 import { recomputeAllElo } from './elo';
-import { SEED_PLAYERS, SEED_GAMES, SEED_VERSION } from './seedData';
+import { SEED_PLAYERS, SEED_GAMES } from './seedData';
 
-const STORAGE_KEY = 'wingspan-elo-data';
-const VERSION_KEY = 'wingspan-elo-version';
+const playersCol = collection(db, 'players');
+const gamesCol = collection(db, 'games');
 
-function loadRaw(): AppState | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as AppState;
-  } catch {
-    return null;
+async function fetchPlayers(): Promise<Player[]> {
+  const snap = await getDocs(playersCol);
+  return snap.docs.map((d) => d.data() as Player);
+}
+
+async function fetchGames(): Promise<GameEntry[]> {
+  const snap = await getDocs(gamesCol);
+  const games = snap.docs.map((d) => d.data() as GameEntry);
+  return games.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function seedFirestore(): Promise<void> {
+  const batch = writeBatch(db);
+  for (const p of SEED_PLAYERS) {
+    batch.set(doc(playersCol, p.id), p);
   }
+  for (const g of SEED_GAMES) {
+    batch.set(doc(gamesCol, g.id), g);
+  }
+  await batch.commit();
 }
 
-function save(state: AppState): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  localStorage.setItem(VERSION_KEY, String(SEED_VERSION));
-}
+export async function loadState(): Promise<AppState> {
+  let players = await fetchPlayers();
+  let games = await fetchGames();
 
-function isSeedCurrent(): boolean {
-  const v = localStorage.getItem(VERSION_KEY);
-  return v != null && Number(v) >= SEED_VERSION;
-}
-
-export function loadState(): AppState {
-  const existing = loadRaw();
-  if (existing && existing.games.length > 0 && isSeedCurrent()) {
-    return existing;
+  if (players.length === 0 && games.length === 0) {
+    await seedFirestore();
+    players = SEED_PLAYERS;
+    games = SEED_GAMES;
   }
 
-  const { updatedPlayers, eloHistory } = recomputeAllElo(SEED_PLAYERS, SEED_GAMES);
-  const state: AppState = {
-    players: updatedPlayers,
-    games: SEED_GAMES,
-    eloHistory,
-  };
-  save(state);
-  return state;
+  const { updatedPlayers, eloHistory } = recomputeAllElo(players, games);
+  return { players: updatedPlayers, games, eloHistory };
 }
 
-export function saveState(state: AppState): void {
-  save(state);
-}
-
-export function addGame(
+export async function addGame(
   state: AppState,
-  game: GameEntry
-): AppState {
+  game: GameEntry,
+): Promise<AppState> {
+  await setDoc(doc(gamesCol, game.id), game);
+
   const games = [...state.games, game];
   const { updatedPlayers, eloHistory } = recomputeAllElo(state.players, games);
-  const newState: AppState = { players: updatedPlayers, games, eloHistory };
-  save(newState);
-  return newState;
+
+  const batch = writeBatch(db);
+  for (const p of updatedPlayers) {
+    batch.set(doc(playersCol, p.id), p);
+  }
+  await batch.commit();
+
+  return { players: updatedPlayers, games, eloHistory };
 }
 
-export function addPlayer(state: AppState, name: string): AppState {
+export async function addPlayer(
+  state: AppState,
+  name: string,
+): Promise<AppState> {
   const id = name.toUpperCase().replace(/\s+/g, '');
   const newPlayer: Player = { id, name, currentElo: 1000 };
+  await setDoc(doc(playersCol, id), newPlayer);
+
   const players = [...state.players, newPlayer];
   const { updatedPlayers, eloHistory } = recomputeAllElo(players, state.games);
-  const newState: AppState = { players: updatedPlayers, games: state.games, eloHistory };
-  save(newState);
-  return newState;
-}
-
-export function resetData(): AppState {
-  localStorage.removeItem(STORAGE_KEY);
-  return loadState();
+  return { players: updatedPlayers, games: state.games, eloHistory };
 }

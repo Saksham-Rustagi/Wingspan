@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { AppState, GameEntry } from './types';
 import { loadState, addGame, addPlayer } from './lib/storage';
 import Leaderboard from './components/Leaderboard';
@@ -20,25 +20,76 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export default function App() {
-  const [state, setState] = useState<AppState>(loadState);
+  const [state, setState] = useState<AppState | null>(null);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('leaderboard');
   const [selectedGameIndex, setSelectedGameIndex] = useState<number | null>(null);
 
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadState()
+      .then((s) => {
+        setState(s);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load from Firebase:', err);
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
+  }, []);
+
   const handleAddGame = useCallback(
-    (game: GameEntry) => {
-      setState((prev) => addGame(prev, game));
+    async (game: GameEntry) => {
+      if (!state) return;
+      const newState = await addGame(state, game);
+      setState(newState);
       setActiveTab('leaderboard');
     },
-    []
+    [state]
   );
 
   const handleAddPlayer = useCallback(
-    (name: string) => {
-      setState((prev) => addPlayer(prev, name));
+    async (name: string) => {
+      if (!state) return;
+      const newState = await addPlayer(state, name);
+      setState(newState);
       setActiveTab('leaderboard');
     },
-    []
+    [state]
   );
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-zinc-400 text-sm">Loading data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !state) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <div className="text-center max-w-md px-4">
+          <p className="text-red-400 text-lg font-semibold mb-2">Failed to connect to Firebase</p>
+          <p className="text-zinc-500 text-sm mb-4">{error}</p>
+          <p className="text-zinc-600 text-xs">
+            Make sure Firestore is enabled in your Firebase Console and security rules allow reads/writes.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-500 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const selectedGame = selectedGameIndex != null ? state.games[selectedGameIndex] : null;
 

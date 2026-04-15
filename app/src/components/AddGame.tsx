@@ -31,17 +31,28 @@ interface Props {
   onSubmit: (game: GameEntry) => void;
 }
 
+function stableSortByScore(order: string[], forms: Record<string, PlayerForm>): string[] {
+  return [...order].sort((a, b) => {
+    const diff = (forms[b]?.scores.total ?? 0) - (forms[a]?.scores.total ?? 0);
+    if (diff !== 0) return diff;
+    return order.indexOf(a) - order.indexOf(b);
+  });
+}
+
 export default function AddGame({ players, gameCount, onSubmit }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [playerForms, setPlayerForms] = useState<Record<string, PlayerForm>>({});
   const [showScores, setShowScores] = useState(false);
+  const [finalOrder, setFinalOrder] = useState<string[]>([]);
 
   function togglePlayer(id: string) {
     const next = new Set(selected);
     if (next.has(id)) {
       next.delete(id);
+      setFinalOrder((prev) => prev.filter((x) => x !== id));
     } else {
       next.add(id);
+      setFinalOrder((prev) => [...prev, id]);
     }
     setSelected(next);
     if (!playerForms[id]) {
@@ -65,7 +76,26 @@ export default function AddGame({ players, gameCount, onSubmit }: Props) {
           scores.foodOnCards +
           scores.tuckedCards;
       }
-      return { ...prev, [playerId]: { ...form, scores } };
+      const next = { ...prev, [playerId]: { ...form, scores } };
+      setFinalOrder((order) => stableSortByScore(order, next));
+      return next;
+    });
+  }
+
+  function movePlayer(playerId: string, direction: 'up' | 'down') {
+    setFinalOrder((prev) => {
+      const idx = prev.indexOf(playerId);
+      if (direction === 'up' && idx > 0) {
+        const next = [...prev];
+        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+        return next;
+      }
+      if (direction === 'down' && idx < prev.length - 1) {
+        const next = [...prev];
+        [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
+        return next;
+      }
+      return prev;
     });
   }
 
@@ -73,23 +103,18 @@ export default function AddGame({ players, gameCount, onSubmit }: Props) {
     e.preventDefault();
     if (selected.size < 2) return;
 
-    const entries = Array.from(selected).map((id) => {
-      const form = playerForms[id] ?? { playerId: id, scores: { ...EMPTY_SCORES } };
-      return form;
-    });
-
-    entries.sort((a, b) => b.scores.total - a.scores.total);
-
     let placement = 1;
-    const gamePlayers = entries.map((entry, idx) => {
-      if (idx > 0 && entry.scores.total < entries[idx - 1].scores.total) {
-        placement = idx + 1;
+    const gamePlayers = finalOrder.map((playerId, idx) => {
+      if (idx > 0) {
+        const prevId = finalOrder[idx - 1];
+        const prevTotal = playerForms[prevId]?.scores.total ?? 0;
+        const currTotal = playerForms[playerId]?.scores.total ?? 0;
+        if (currTotal < prevTotal) {
+          placement = idx + 1;
+        }
       }
-      return {
-        playerId: entry.playerId,
-        placement,
-        scores: entry.scores,
-      };
+      const form = playerForms[playerId] ?? { playerId, scores: { ...EMPTY_SCORES } };
+      return { playerId, placement, scores: form.scores };
     });
 
     const game: GameEntry = {
@@ -101,6 +126,7 @@ export default function AddGame({ players, gameCount, onSubmit }: Props) {
     onSubmit(game);
     setSelected(new Set());
     setPlayerForms({});
+    setFinalOrder([]);
   }
 
   const selectedPlayers = players.filter((p) => selected.has(p.id));
@@ -204,6 +230,76 @@ export default function AddGame({ players, gameCount, onSubmit }: Props) {
               ))}
             </div>
           )}
+
+          {finalOrder.length >= 2 && (() => {
+            const hasTies = finalOrder.some((id, idx) => {
+              if (idx === 0) return false;
+              const prevId = finalOrder[idx - 1];
+              return (playerForms[id]?.scores.total ?? 0) === (playerForms[prevId]?.scores.total ?? 0);
+            });
+            return (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-zinc-400">Final Standings</label>
+                  {hasTies && (
+                    <span className="text-xs text-amber-400">Tie detected — adjust order to set tiebreak</span>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  {finalOrder.map((id, idx) => {
+                    const player = players.find((p) => p.id === id);
+                    const total = playerForms[id]?.scores.total ?? 0;
+                    const prevTotal = idx > 0 ? (playerForms[finalOrder[idx - 1]]?.scores.total ?? 0) : null;
+                    const nextTotal = idx < finalOrder.length - 1 ? (playerForms[finalOrder[idx + 1]]?.scores.total ?? 0) : null;
+                    const tiedWithPrev = prevTotal !== null && total === prevTotal;
+                    const tiedWithNext = nextTotal !== null && total === nextTotal;
+                    const isTied = tiedWithPrev || tiedWithNext;
+                    let placement = 1;
+                    for (let i = 0; i < idx; i++) {
+                      const prevId = finalOrder[i];
+                      if ((playerForms[prevId]?.scores.total ?? 0) > total) {
+                        placement = i + 2;
+                      }
+                    }
+                    return (
+                      <div
+                        key={id}
+                        className={`flex items-center gap-2 rounded-lg px-3 py-2 ${isTied ? 'bg-amber-950/30 border border-amber-800/40' : 'bg-zinc-900/50 border border-zinc-800'}`}
+                      >
+                        <span className="text-xs font-mono text-zinc-500 w-5 text-right shrink-0">
+                          {placement}
+                        </span>
+                        <span className="flex-1 text-sm text-zinc-200 font-medium">{player?.name}</span>
+                        <span className="text-xs font-mono text-zinc-400 shrink-0">{total} pts</span>
+                        {isTied && (
+                          <div className="flex flex-col gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => movePlayer(id, 'up')}
+                              disabled={idx === 0}
+                              className="text-zinc-400 hover:text-zinc-100 disabled:opacity-20 disabled:cursor-not-allowed leading-none px-1"
+                              aria-label="Move up"
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => movePlayer(id, 'down')}
+                              disabled={idx === finalOrder.length - 1}
+                              className="text-zinc-400 hover:text-zinc-100 disabled:opacity-20 disabled:cursor-not-allowed leading-none px-1"
+                              aria-label="Move down"
+                            >
+                              ▼
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           <button
             type="submit"
