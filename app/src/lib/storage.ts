@@ -79,3 +79,20 @@ export async function addPlayer(
   const { updatedPlayers, eloHistory } = recomputeAllElo(players, state.games);
   return { players: updatedPlayers, games: state.games, eloHistory };
 }
+
+export async function updatePlayerColor(
+  state: AppState,
+  playerId: string,
+  color: string,
+): Promise<AppState> {
+  const target = state.players.find((p) => p.id === playerId);
+  if (!target) return state;
+
+  const updated: Player = { ...target, color };
+  await setDoc(doc(playersCol, playerId), updated);
+
+  const players = state.players.map((p) =>
+    p.id === playerId ? updated : p,
+  );
+  return { ...state, players };
+}

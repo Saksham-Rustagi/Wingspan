@@ -11,14 +11,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import type { Player, EloSnapshot } from '../types';
-
-const PLAYER_LINE_COLORS: Record<string, string> = {
-  AS: '#f43f5e',
-  NT: '#0ea5e9',
-  HS: '#10b981',
-  SR: '#8b5cf6',
-  GM: '#f59e0b',
-};
+import { getPlayerColor } from '../lib/playerColors';
 
 interface Props {
   players: Player[];
@@ -101,19 +94,22 @@ export default function EloChart({
               strokeDasharray="4 4"
             />
           )}
-          {players.map((p) => (
-            <Line
-              key={p.id}
-              type="monotone"
-              dataKey={p.id}
-              name={p.name}
-              stroke={PLAYER_LINE_COLORS[p.id] ?? '#71717a'}
-              strokeWidth={2.5}
-              dot={{ r: 4, fill: PLAYER_LINE_COLORS[p.id] ?? '#71717a' }}
-              activeDot={{ r: 6 }}
-              connectNulls
-            />
-          ))}
+          {players.map((p, idx) => {
+            const stroke = getPlayerColor(p, idx);
+            return (
+              <Line
+                key={p.id}
+                type="monotone"
+                dataKey={p.id}
+                name={p.name}
+                stroke={stroke}
+                strokeWidth={2.5}
+                dot={{ r: 4, fill: stroke }}
+                activeDot={{ r: 6 }}
+                connectNulls
+              />
+            );
+          })}
         </LineChart>
       </ResponsiveContainer>
 

@@ -1,6 +1,11 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { AppState, GameEntry } from './types';
-import { loadState, addGame, addPlayer } from './lib/storage';
+import { loadState, addGame, addPlayer, updatePlayerColor } from './lib/storage';
+import {
+  MIN_GAMES_ACTIVE,
+  getGameCounts,
+  filterActivePlayers,
+} from './lib/playerFilters';
 import Leaderboard from './components/Leaderboard';
 import EloChart from './components/EloChart';
 import GameDetail from './components/GameDetail';
@@ -24,6 +29,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('leaderboard');
   const [selectedGameIndex, setSelectedGameIndex] = useState<number | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +65,34 @@ export default function App() {
     },
     [state]
   );
+
+  const handleChangePlayerColor = useCallback(
+    async (playerId: string, color: string) => {
+      if (!state) return;
+      const newState = await updatePlayerColor(state, playerId, color);
+      setState(newState);
+    },
+    [state]
+  );
+
+  const gameCounts = useMemo(
+    () => (state ? getGameCounts(state.games) : {}),
+    [state]
+  );
+
+  const hasInactivePlayers = useMemo(() => {
+    if (!state) return false;
+    return state.players.some(
+      (p) => (gameCounts[p.id] ?? 0) < MIN_GAMES_ACTIVE
+    );
+  }, [state, gameCounts]);
+
+  const visiblePlayers = useMemo(() => {
+    if (!state) return [];
+    return showInactive
+      ? state.players
+      : filterActivePlayers(state.players, state.games);
+  }, [state, showInactive]);
 
   if (loading) {
     return (
@@ -133,14 +167,42 @@ export default function App() {
       <main className="max-w-3xl mx-auto px-4 py-6">
         {activeTab === 'leaderboard' && (
           <div className="space-y-8">
+            {hasInactivePlayers && (
+              <div className="flex items-center justify-between rounded-lg bg-zinc-900 border border-zinc-800 px-4 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-zinc-300 text-sm font-medium">
+                    Show occasional players
+                  </p>
+                  <p className="text-zinc-500 text-xs">
+                    Hides players with fewer than {MIN_GAMES_ACTIVE} games
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowInactive((v) => !v)}
+                  role="switch"
+                  aria-checked={showInactive}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                    showInactive ? 'bg-violet-600' : 'bg-zinc-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                      showInactive ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
+
             <section>
               <SectionHeader
                 title="Rankings"
                 subtitle="Current Elo standings"
               />
               <Leaderboard
-                players={state.players}
+                players={visiblePlayers}
                 eloHistory={state.eloHistory}
+                onChangeColor={handleChangePlayerColor}
               />
             </section>
 
@@ -150,7 +212,7 @@ export default function App() {
                 subtitle="Click a game point to see details"
               />
               <EloChart
-                players={state.players}
+                players={visiblePlayers}
                 eloHistory={state.eloHistory}
                 totalGames={state.games.length}
                 selectedGameIndex={selectedGameIndex}

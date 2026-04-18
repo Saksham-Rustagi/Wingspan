@@ -24,6 +24,7 @@ export interface Player {
   id: string;
   name: string;
   currentElo: number;
+  color?: string;
 }
 
 export interface EloSnapshot {

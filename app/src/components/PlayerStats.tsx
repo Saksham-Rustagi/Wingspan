@@ -16,23 +16,8 @@ import {
   PolarAngleAxis,
 } from 'recharts';
 import type { Player, GameEntry, PlayerScores } from '../types';
-
-const PLAYER_COLORS: Record<string, string> = {
-  AS: '#f43f5e',
-  NT: '#0ea5e9',
-  HS: '#10b981',
-  SR: '#8b5cf6',
-  GM: '#f59e0b',
-};
-
-const FALLBACK_COLORS = [
-  '#ec4899',
-  '#06b6d4',
-  '#22c55e',
-  '#a855f7',
-  '#eab308',
-  '#f97316',
-];
+import { MIN_GAMES_ACTIVE, getActivePlayerIds } from '../lib/playerFilters';
+import { getPlayerColor } from '../lib/playerColors';
 
 type ScoreCategory = keyof Omit<PlayerScores, 'total'>;
 
@@ -52,8 +37,10 @@ const TOOLTIP_STYLE = {
   fontSize: '13px',
 };
 
-function color(id: string, idx: number) {
-  return PLAYER_COLORS[id] ?? FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
+function colorFor(players: Player[], id: string, idx: number) {
+  const player = players.find((p) => p.id === id);
+  if (!player) return '#71717a';
+  return getPlayerColor(player, idx);
 }
 
 function name(players: Player[], id: string) {
@@ -65,8 +52,18 @@ interface Props {
   games: GameEntry[];
 }
 
-export default function PlayerStats({ players, games }: Props) {
+export default function PlayerStats({ players: allPlayers, games }: Props) {
   const [dnaPlayer, setDnaPlayer] = useState<string | null>(null);
+
+  const activePlayerIds = useMemo(
+    () => getActivePlayerIds(games),
+    [games],
+  );
+  const players = useMemo(
+    () => allPlayers.filter((p) => activePlayerIds.has(p.id)),
+    [allPlayers, activePlayerIds],
+  );
+  const hiddenPlayerCount = allPlayers.length - players.length;
 
   const scoredGames = useMemo(
     () => games.filter((g) => g.players.some((p) => p.scores.total > 0)),
@@ -150,17 +147,20 @@ export default function PlayerStats({ players, games }: Props) {
   const scoreTrendData = useMemo(() => {
     return games
       .map((game, idx) => {
-        if (!game.players.some((p) => p.scores.total > 0)) return null;
+        const activeScored = game.players.filter(
+          (p) => activePlayerIds.has(p.playerId) && p.scores.total > 0,
+        );
+        if (activeScored.length === 0) return null;
         const point: Record<string, string | number> = {
           name: `Game ${idx + 1}`,
         };
-        for (const gp of game.players) {
-          if (gp.scores.total > 0) point[gp.playerId] = gp.scores.total;
+        for (const gp of activeScored) {
+          point[gp.playerId] = gp.scores.total;
         }
         return point;
       })
       .filter((d): d is Record<string, string | number> => d !== null);
-  }, [games]);
+  }, [games, activePlayerIds]);
 
   // ── Category breakdown ──
   const categoryBreakdown = useMemo(() => {
@@ -294,6 +294,7 @@ export default function PlayerStats({ players, games }: Props) {
     let maxTotalGame = 0;
     games.forEach((game, idx) => {
       for (const gp of game.players) {
+        if (!activePlayerIds.has(gp.playerId)) continue;
         if (gp.scores.total > maxTotal) {
           maxTotal = gp.scores.total;
           maxTotalPlayer = gp.playerId;
@@ -315,7 +316,12 @@ export default function PlayerStats({ players, games }: Props) {
     let minWinGame = 0;
     scoredGames.forEach((game) => {
       const winner = game.players.find((p) => p.placement === 1);
-      if (winner && winner.scores.total > 0 && winner.scores.total < minWin) {
+      if (
+        winner &&
+        activePlayerIds.has(winner.playerId) &&
+        winner.scores.total > 0 &&
+        winner.scores.total < minWin
+      ) {
         minWin = winner.scores.total;
         minWinPlayer = winner.playerId;
         minWinGame = games.indexOf(game) + 1;
@@ -335,7 +341,9 @@ export default function PlayerStats({ players, games }: Props) {
     let maxGapGame = 0;
     scoredGames.forEach((game) => {
       const sorted = [...game.players]
-        .filter((p) => p.scores.total > 0)
+        .filter(
+          (p) => activePlayerIds.has(p.playerId) && p.scores.total > 0,
+        )
         .sort((a, b) => b.scores.total - a.scores.total);
       if (sorted.length >= 2) {
         const gap = sorted[0].scores.total - sorted[1].scores.total;
@@ -359,7 +367,9 @@ export default function PlayerStats({ players, games }: Props) {
     let closestGame = 0;
     scoredGames.forEach((game) => {
       const totals = game.players
-        .filter((p) => p.scores.total > 0)
+        .filter(
+          (p) => activePlayerIds.has(p.playerId) && p.scores.total > 0,
+        )
         .map((p) => p.scores.total);
       if (totals.length >= 2) {
         const spread = Math.max(...totals) - Math.min(...totals);
@@ -469,6 +479,7 @@ export default function PlayerStats({ players, games }: Props) {
     for (const { key, label } of CATEGORIES) {
       games.forEach((game, idx) => {
         for (const gp of game.players) {
+          if (!activePlayerIds.has(gp.playerId)) continue;
           if (gp.scores[key] > bestCatScore) {
             bestCatScore = gp.scores[key];
             bestCatScorePlayer = gp.playerId;
@@ -571,7 +582,7 @@ export default function PlayerStats({ players, games }: Props) {
       });
 
     return results;
-  }, [players, games, scoredGames]);
+  }, [players, games, scoredGames, categoryGames, activePlayerIds]);
 
   // ── Head-to-head ──
   const h2h = useMemo(() => {
@@ -586,10 +597,13 @@ export default function PlayerStats({ players, games }: Props) {
       }
     }
     for (const game of games) {
-      for (let i = 0; i < game.players.length; i++) {
-        for (let j = i + 1; j < game.players.length; j++) {
-          const a = game.players[i];
-          const b = game.players[j];
+      const activeInGame = game.players.filter((p) =>
+        activePlayerIds.has(p.playerId),
+      );
+      for (let i = 0; i < activeInGame.length; i++) {
+        for (let j = i + 1; j < activeInGame.length; j++) {
+          const a = activeInGame[i];
+          const b = activeInGame[j];
           if (a.placement < b.placement) {
             result[a.playerId][b.playerId].wins++;
             result[b.playerId][a.playerId].losses++;
@@ -601,10 +615,18 @@ export default function PlayerStats({ players, games }: Props) {
       }
     }
     return result;
-  }, [players, games]);
+  }, [players, games, activePlayerIds]);
 
   return (
     <div className="space-y-8">
+      {hiddenPlayerCount > 0 && (
+        <div className="rounded-lg bg-zinc-900 border border-zinc-800 px-4 py-2.5 text-xs text-zinc-400">
+          Stats exclude {hiddenPlayerCount} player
+          {hiddenPlayerCount > 1 ? 's' : ''} with fewer than {MIN_GAMES_ACTIVE}{' '}
+          games.
+        </div>
+      )}
+
       {/* ── Player Overview Cards ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {playerStats.map(
@@ -627,7 +649,7 @@ export default function PlayerStats({ players, games }: Props) {
                   <div
                     className="w-2.5 h-2.5 rounded-full"
                     style={{
-                      backgroundColor: color(
+                      backgroundColor: colorFor(players, 
                         player.id,
                         players.indexOf(player),
                       ),
@@ -695,9 +717,9 @@ export default function PlayerStats({ players, games }: Props) {
                   type="monotone"
                   dataKey={p.id}
                   name={p.name}
-                  stroke={color(p.id, idx)}
+                  stroke={colorFor(players, p.id, idx)}
                   strokeWidth={2.5}
-                  dot={{ r: 4, fill: color(p.id, idx) }}
+                  dot={{ r: 4, fill: colorFor(players, p.id, idx) }}
                   activeDot={{ r: 6 }}
                   connectNulls
                 />
@@ -738,7 +760,7 @@ export default function PlayerStats({ players, games }: Props) {
                     <span
                       className="font-medium"
                       style={{
-                        color: color(
+                        color: colorFor(players, 
                           cat.topPlayer,
                           players.findIndex((p) => p.id === cat.topPlayer),
                         ),
@@ -765,7 +787,7 @@ export default function PlayerStats({ players, games }: Props) {
                             className="h-full rounded-full transition-all"
                             style={{
                               width: `${maxAvg > 0 ? (pa.avg / maxAvg) * 100 : 0}%`,
-                              backgroundColor: color(
+                              backgroundColor: colorFor(players, 
                                 pa.id,
                                 players.findIndex((p) => p.id === pa.id),
                               ),
@@ -818,7 +840,7 @@ export default function PlayerStats({ players, games }: Props) {
                   key={p.id}
                   dataKey={p.id}
                   name={p.name}
-                  fill={color(p.id, idx)}
+                  fill={colorFor(players, p.id, idx)}
                   radius={[3, 3, 0, 0]}
                 />
               ))}
@@ -857,7 +879,7 @@ export default function PlayerStats({ players, games }: Props) {
                 }`}
                 style={
                   dnaPlayer === p.id
-                    ? { backgroundColor: color(p.id, idx) }
+                    ? { backgroundColor: colorFor(players, p.id, idx) }
                     : undefined
                 }
               >
@@ -879,8 +901,8 @@ export default function PlayerStats({ players, games }: Props) {
                   key={p.id}
                   name={p.name}
                   dataKey={p.id}
-                  stroke={color(p.id, players.indexOf(p))}
-                  fill={color(p.id, players.indexOf(p))}
+                  stroke={colorFor(players, p.id, players.indexOf(p))}
+                  fill={colorFor(players, p.id, players.indexOf(p))}
                   fillOpacity={dnaPlayer ? 0.2 : 0.08}
                   strokeWidth={dnaPlayer ? 3 : 2}
                 />
