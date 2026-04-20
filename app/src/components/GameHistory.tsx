@@ -6,9 +6,15 @@ interface Props {
   games: GameEntry[];
   players: Player[];
   eloHistory: EloSnapshot[];
+  ratingLabel?: string;
 }
 
-export default function GameHistory({ games, players, eloHistory }: Props) {
+export default function GameHistory({
+  games,
+  players,
+  eloHistory,
+  ratingLabel = 'Elo',
+}: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const playerMap = Object.fromEntries(players.map((p) => [p.id, p]));
@@ -63,6 +69,7 @@ export default function GameHistory({ games, players, eloHistory }: Props) {
                   gameIndex={gameIdx}
                   players={players}
                   eloHistory={eloHistory}
+                  ratingLabel={ratingLabel}
                 />
               </div>
             )}

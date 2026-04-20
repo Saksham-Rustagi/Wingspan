@@ -34,9 +34,16 @@ interface Props {
   gameIndex: number;
   players: Player[];
   eloHistory: EloSnapshot[];
+  ratingLabel?: string;
 }
 
-export default function GameDetail({ game, gameIndex, players, eloHistory }: Props) {
+export default function GameDetail({
+  game,
+  gameIndex,
+  players,
+  eloHistory,
+  ratingLabel = 'Elo',
+}: Props) {
   const playerMap = Object.fromEntries(players.map((p) => [p.id, p]));
   const sorted = [...game.players].sort((a, b) => a.placement - b.placement);
   const showScores = hasScoreData(game);
@@ -51,7 +58,7 @@ export default function GameDetail({ game, gameIndex, players, eloHistory }: Pro
             <tr className="text-zinc-500 text-xs">
               <th className="text-left py-1 pr-4">#</th>
               <th className="text-left py-1 pr-4">Player</th>
-              <th className="text-right py-1 pl-4">Elo Δ</th>
+              <th className="text-right py-1 pl-4">{ratingLabel} Δ</th>
             </tr>
           </thead>
           <tbody>
@@ -95,7 +102,7 @@ export default function GameDetail({ game, gameIndex, players, eloHistory }: Pro
               <th className="text-left py-1 pr-4">#</th>
               <th className="text-left py-1 pr-4">Player</th>
               <th className="text-right py-1 px-2 font-semibold">Total</th>
-              <th className="text-right py-1 pl-4">Elo Δ</th>
+              <th className="text-right py-1 pl-4">{ratingLabel} Δ</th>
             </tr>
           </thead>
           <tbody>
@@ -146,7 +153,7 @@ export default function GameDetail({ game, gameIndex, players, eloHistory }: Pro
             <th className="text-right py-1 px-2">Food</th>
             <th className="text-right py-1 px-2">Tucked</th>
             <th className="text-right py-1 px-2 font-semibold">Total</th>
-            <th className="text-right py-1 pl-4">Elo Δ</th>
+            <th className="text-right py-1 pl-4">{ratingLabel} Δ</th>
           </tr>
         </thead>
         <tbody>

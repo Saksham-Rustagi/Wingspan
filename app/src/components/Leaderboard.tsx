@@ -22,10 +22,17 @@ function getEloDelta(
 interface Props {
   players: Player[];
   eloHistory: EloSnapshot[];
+  /** Short label for the rating column (e.g. "Elo", "Glicko-2"). */
+  ratingLabel?: string;
   onChangeColor?: (playerId: string, color: string) => void | Promise<void>;
 }
 
-export default function Leaderboard({ players, eloHistory, onChangeColor }: Props) {
+export default function Leaderboard({
+  players,
+  eloHistory,
+  ratingLabel = 'Elo',
+  onChangeColor,
+}: Props) {
   const sorted = [...players].sort((a, b) => b.currentElo - a.currentElo);
   const [openPickerId, setOpenPickerId] = useState<string | null>(null);
 
@@ -102,6 +109,9 @@ export default function Leaderboard({ players, eloHistory, onChangeColor }: Prop
             <div className="text-right">
               <p className="font-mono text-xl font-semibold text-zinc-100">
                 {player.currentElo}
+                <span className="ml-1 text-[10px] font-sans font-medium uppercase tracking-wider text-zinc-500">
+                  {ratingLabel}
+                </span>
               </p>
               {delta !== null && (
                 <p

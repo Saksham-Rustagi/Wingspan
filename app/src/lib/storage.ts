@@ -7,11 +7,15 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import type { AppState, Player, GameEntry } from '../types';
-import { recomputeAllElo } from './elo';
 import { SEED_PLAYERS, SEED_GAMES } from './seedData';
 
 const playersCol = collection(db, 'players');
 const gamesCol = collection(db, 'games');
+
+/** Fallback value written to Firestore when a player is created. The
+ * actual display rating is recomputed client-side for whichever rating
+ * system is currently selected, so this is purely a legacy cache. */
+const DEFAULT_RATING_CACHE = 1000;
 
 async function fetchPlayers(): Promise<Player[]> {
   const snap = await getDocs(playersCol);
@@ -45,8 +49,7 @@ export async function loadState(): Promise<AppState> {
     games = SEED_GAMES;
   }
 
-  const { updatedPlayers, eloHistory } = recomputeAllElo(players, games);
-  return { players: updatedPlayers, games, eloHistory };
+  return { players, games };
 }
 
 export async function addGame(
@@ -54,17 +57,10 @@ export async function addGame(
   game: GameEntry,
 ): Promise<AppState> {
   await setDoc(doc(gamesCol, game.id), game);
-
-  const games = [...state.games, game];
-  const { updatedPlayers, eloHistory } = recomputeAllElo(state.players, games);
-
-  const batch = writeBatch(db);
-  for (const p of updatedPlayers) {
-    batch.set(doc(playersCol, p.id), p);
-  }
-  await batch.commit();
-
-  return { players: updatedPlayers, games, eloHistory };
+  return {
+    ...state,
+    games: [...state.games, game],
+  };
 }
 
 export async function addPlayer(
@@ -72,12 +68,17 @@ export async function addPlayer(
   name: string,
 ): Promise<AppState> {
   const id = name.toUpperCase().replace(/\s+/g, '');
-  const newPlayer: Player = { id, name, currentElo: 1000 };
+  const newPlayer: Player = {
+    id,
+    name,
+    currentElo: DEFAULT_RATING_CACHE,
+  };
   await setDoc(doc(playersCol, id), newPlayer);
 
-  const players = [...state.players, newPlayer];
-  const { updatedPlayers, eloHistory } = recomputeAllElo(players, state.games);
-  return { players: updatedPlayers, games: state.games, eloHistory };
+  return {
+    ...state,
+    players: [...state.players, newPlayer],
+  };
 }
 
 export async function updatePlayerColor(
@@ -91,8 +92,8 @@ export async function updatePlayerColor(
   const updated: Player = { ...target, color };
   await setDoc(doc(playersCol, playerId), updated);
 
-  const players = state.players.map((p) =>
-    p.id === playerId ? updated : p,
-  );
-  return { ...state, players };
+  return {
+    ...state,
+    players: state.players.map((p) => (p.id === playerId ? updated : p)),
+  };
 }

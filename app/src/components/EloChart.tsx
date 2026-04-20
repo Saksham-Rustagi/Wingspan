@@ -19,6 +19,8 @@ interface Props {
   totalGames: number;
   selectedGameIndex: number | null;
   onSelectGame: (gameIndex: number | null) => void;
+  /** Short label for the rating axis (e.g. "Elo", "Glicko-2"). */
+  ratingLabel?: string;
 }
 
 export default function EloChart({
@@ -27,6 +29,7 @@ export default function EloChart({
   totalGames,
   selectedGameIndex,
   onSelectGame,
+  ratingLabel = 'Elo',
 }: Props) {
   const data = eloHistory.map((snap, idx) => {
     const point: Record<string, string | number> = {
@@ -75,6 +78,12 @@ export default function EloChart({
             stroke="#71717a"
             tick={{ fontSize: 12 }}
             domain={['dataMin - 20', 'dataMax + 20']}
+            label={{
+              value: ratingLabel,
+              angle: -90,
+              position: 'insideLeft',
+              style: { fill: '#71717a', fontSize: 11 },
+            }}
           />
           <Tooltip
             contentStyle={{

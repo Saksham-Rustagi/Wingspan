@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import type { AppState, GameEntry } from './types';
+import type { AppState, GameEntry, RatingSystem } from './types';
 import { loadState, addGame, addPlayer, updatePlayerColor } from './lib/storage';
+import { recomputeRatings, RATING_SYSTEMS, RATING_SYSTEM_LIST } from './lib/rating';
 import {
   MIN_GAMES_ACTIVE,
   getGameCounts,
@@ -24,12 +25,26 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'addPlayer', label: '+ Player' },
 ];
 
+const RATING_STORAGE_KEY = 'wingspan.ratingSystem';
+
+function loadRatingSystemPreference(): RatingSystem {
+  if (typeof window === 'undefined') return 'elo';
+  const stored = window.localStorage.getItem(RATING_STORAGE_KEY);
+  if (stored === 'elo' || stored === 'glicko2' || stored === 'trueskill') {
+    return stored;
+  }
+  return 'elo';
+}
+
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('leaderboard');
   const [selectedGameIndex, setSelectedGameIndex] = useState<number | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const [ratingSystem, setRatingSystem] = useState<RatingSystem>(
+    loadRatingSystemPreference,
+  );
 
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +61,11 @@ export default function App() {
       });
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(RATING_STORAGE_KEY, ratingSystem);
+  }, [ratingSystem]);
+
   const handleAddGame = useCallback(
     async (game: GameEntry) => {
       if (!state) return;
@@ -53,7 +73,7 @@ export default function App() {
       setState(newState);
       setActiveTab('leaderboard');
     },
-    [state]
+    [state],
   );
 
   const handleAddPlayer = useCallback(
@@ -63,7 +83,7 @@ export default function App() {
       setState(newState);
       setActiveTab('leaderboard');
     },
-    [state]
+    [state],
   );
 
   const handleChangePlayerColor = useCallback(
@@ -72,27 +92,40 @@ export default function App() {
       const newState = await updatePlayerColor(state, playerId, color);
       setState(newState);
     },
-    [state]
+    [state],
   );
+
+  // Re-derive display ratings + history from raw state and the currently
+  // selected rating system. Cheap enough to recompute on every change
+  // and avoids Firestore writes when switching systems.
+  const derived = useMemo(() => {
+    if (!state) return null;
+    const { updatedPlayers, history } = recomputeRatings(
+      ratingSystem,
+      state.players,
+      state.games,
+    );
+    return { players: updatedPlayers, history };
+  }, [state, ratingSystem]);
 
   const gameCounts = useMemo(
     () => (state ? getGameCounts(state.games) : {}),
-    [state]
+    [state],
   );
 
   const hasInactivePlayers = useMemo(() => {
-    if (!state) return false;
-    return state.players.some(
-      (p) => (gameCounts[p.id] ?? 0) < MIN_GAMES_ACTIVE
+    if (!derived) return false;
+    return derived.players.some(
+      (p) => (gameCounts[p.id] ?? 0) < MIN_GAMES_ACTIVE,
     );
-  }, [state, gameCounts]);
+  }, [derived, gameCounts]);
 
   const visiblePlayers = useMemo(() => {
-    if (!state) return [];
+    if (!derived || !state) return [];
     return showInactive
-      ? state.players
-      : filterActivePlayers(state.players, state.games);
-  }, [state, showInactive]);
+      ? derived.players
+      : filterActivePlayers(derived.players, state.games);
+  }, [derived, state, showInactive]);
 
   if (loading) {
     return (
@@ -105,7 +138,7 @@ export default function App() {
     );
   }
 
-  if (error || !state) {
+  if (error || !state || !derived) {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
         <div className="text-center max-w-md px-4">
@@ -126,6 +159,7 @@ export default function App() {
   }
 
   const selectedGame = selectedGameIndex != null ? state.games[selectedGameIndex] : null;
+  const activeMeta = RATING_SYSTEMS[ratingSystem];
 
   return (
     <div className="min-h-screen bg-zinc-950">
@@ -133,10 +167,10 @@ export default function App() {
         <div className="max-w-3xl mx-auto px-4 py-5">
           <h1 className="text-2xl font-bold text-zinc-100 tracking-tight">
             Wingspan
-            <span className="text-violet-400 ml-1.5">Elo</span>
+            <span className="text-violet-400 ml-1.5">Ratings</span>
           </h1>
           <p className="text-zinc-500 text-sm mt-0.5">
-            Multiplayer rating tracker
+            Multiplayer skill tracker · {activeMeta.label}
           </p>
         </div>
       </header>
@@ -167,6 +201,14 @@ export default function App() {
       <main className="max-w-3xl mx-auto px-4 py-6">
         {activeTab === 'leaderboard' && (
           <div className="space-y-8">
+            <RatingSystemSwitcher
+              value={ratingSystem}
+              onChange={(next) => {
+                setRatingSystem(next);
+                setSelectedGameIndex(null);
+              }}
+            />
+
             {hasInactivePlayers && (
               <div className="flex items-center justify-between rounded-lg bg-zinc-900 border border-zinc-800 px-4 py-2.5">
                 <div className="min-w-0">
@@ -197,26 +239,28 @@ export default function App() {
             <section>
               <SectionHeader
                 title="Rankings"
-                subtitle="Current Elo standings"
+                subtitle={`Current ${activeMeta.label} standings`}
               />
               <Leaderboard
                 players={visiblePlayers}
-                eloHistory={state.eloHistory}
+                eloHistory={derived.history}
+                ratingLabel={activeMeta.short}
                 onChangeColor={handleChangePlayerColor}
               />
             </section>
 
             <section>
               <SectionHeader
-                title="Elo Over Time"
+                title={`${activeMeta.label} Over Time`}
                 subtitle="Click a game point to see details"
               />
               <EloChart
                 players={visiblePlayers}
-                eloHistory={state.eloHistory}
+                eloHistory={derived.history}
                 totalGames={state.games.length}
                 selectedGameIndex={selectedGameIndex}
                 onSelectGame={setSelectedGameIndex}
+                ratingLabel={activeMeta.short}
               />
 
               {selectedGame && selectedGameIndex != null && (
@@ -244,8 +288,9 @@ export default function App() {
                     <GameDetail
                       game={selectedGame}
                       gameIndex={selectedGameIndex}
-                      players={state.players}
-                      eloHistory={state.eloHistory}
+                      players={derived.players}
+                      eloHistory={derived.history}
+                      ratingLabel={activeMeta.short}
                     />
                   </div>
                 </div>
@@ -289,12 +334,13 @@ export default function App() {
           <section>
             <SectionHeader
               title="Game History"
-              subtitle={`${state.games.length} games recorded`}
+              subtitle={`${state.games.length} games recorded · ${activeMeta.label} deltas`}
             />
             <GameHistory
               games={state.games}
-              players={state.players}
-              eloHistory={state.eloHistory}
+              players={derived.players}
+              eloHistory={derived.history}
+              ratingLabel={activeMeta.short}
             />
           </section>
         )}
@@ -305,16 +351,71 @@ export default function App() {
               title="Player Stats"
               subtitle="Performance breakdown and head-to-head"
             />
-            <PlayerStats players={state.players} games={state.games} />
+            <PlayerStats
+              players={derived.players}
+              games={state.games}
+              ratingLabel={activeMeta.short}
+            />
           </section>
         )}
       </main>
 
       <footer className="border-t border-zinc-800 py-6 mt-12">
         <p className="text-center text-zinc-600 text-xs">
-          Wingspan Elo Tracker &middot; K-factor 32 &middot; Pairwise multiplayer Elo
+          Wingspan Ratings &middot; {activeMeta.label} &middot; {activeMeta.tagline}
         </p>
       </footer>
+    </div>
+  );
+}
+
+function RatingSystemSwitcher({
+  value,
+  onChange,
+}: {
+  value: RatingSystem;
+  onChange: (system: RatingSystem) => void;
+}) {
+  const active = RATING_SYSTEMS[value];
+  return (
+    <div className="rounded-xl bg-zinc-900 border border-zinc-800 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+        <div className="min-w-0">
+          <p className="text-zinc-300 text-sm font-medium">Rating system</p>
+          <p className="text-zinc-500 text-xs truncate">{active.description}</p>
+        </div>
+      </div>
+      <div
+        role="radiogroup"
+        aria-label="Rating system"
+        className="grid grid-cols-3 gap-1 p-1 bg-zinc-950/40"
+      >
+        {RATING_SYSTEM_LIST.map((meta) => {
+          const selected = meta.id === value;
+          return (
+            <button
+              key={meta.id}
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange(meta.id)}
+              className={`flex flex-col items-center gap-0.5 py-2.5 rounded-lg text-xs font-medium transition-all ${
+                selected
+                  ? 'bg-violet-600 text-white shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+              }`}
+            >
+              <span className="text-sm font-semibold">{meta.short}</span>
+              <span
+                className={`text-[10px] leading-tight ${
+                  selected ? 'text-violet-100' : 'text-zinc-500'
+                }`}
+              >
+                {meta.tagline}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

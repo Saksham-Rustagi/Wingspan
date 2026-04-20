@@ -23,17 +23,25 @@ export interface GameEntry {
 export interface Player {
   id: string;
   name: string;
+  /**
+   * Cached display rating (legacy name kept for Firestore compatibility).
+   * Always recomputed client-side based on the active rating system.
+   */
   currentElo: number;
   color?: string;
 }
 
-export interface EloSnapshot {
+export type RatingSystem = 'elo' | 'glicko2' | 'trueskill';
+
+export interface RatingSnapshot {
   gameId: string;
   ratings: Record<string, number>;
 }
 
+// Backwards compatibility alias — older components referenced EloSnapshot.
+export type EloSnapshot = RatingSnapshot;
+
 export interface AppState {
   players: Player[];
   games: GameEntry[];
-  eloHistory: EloSnapshot[];
 }

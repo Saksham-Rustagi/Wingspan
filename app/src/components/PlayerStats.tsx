@@ -50,9 +50,14 @@ function name(players: Player[], id: string) {
 interface Props {
   players: Player[];
   games: GameEntry[];
+  ratingLabel?: string;
 }
 
-export default function PlayerStats({ players: allPlayers, games }: Props) {
+export default function PlayerStats({
+  players: allPlayers,
+  games,
+  ratingLabel = 'Elo',
+}: Props) {
   const [dnaPlayer, setDnaPlayer] = useState<string | null>(null);
 
   const activePlayerIds = useMemo(
@@ -660,7 +665,7 @@ export default function PlayerStats({ players: allPlayers, games }: Props) {
                   </p>
                 </div>
                 <span className="font-mono text-sm text-zinc-400">
-                  {player.currentElo} Elo
+                  {player.currentElo} {ratingLabel}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-2 text-sm">
